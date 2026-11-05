@@ -1,0 +1,27 @@
+name: Feature request / پیشنهاد قابلیت
+description: Suggest an improvement / پیشنهاد بهبود
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve / مشکلی که باید حل شود
+      placeholder: "I struggle to... / مشکلم این است که..."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed behavior / رفتار پیشنهادی
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area / بخش مرتبط
+      options: [Downloading, Queue, Media library, UI/UX, Installation and updates, Documentation, Other]
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / راهکارهای جایگزین

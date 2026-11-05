@@ -1,0 +1,20 @@
+PINHARBOR 2.5.0  /  راهنمای سریع
+================================
+
+NEW INSTALL (source / نصب جدید)
+1) Extract the ZIP completely into a writable folder.
+2) Windows: double-click Run on Windows.bat (Python 3.10+ required).
+3) Paste Pinterest board URL(s) and click «دانلود از لینک‌ها».
+
+UPDATE OLD SOURCE INSTALL / آپدیت نصب سورسی قبلی
+1) Close the old app. Extract this ZIP to a NEW folder.
+2) Run Upgrade Existing Installation.bat and choose the OLD app folder.
+3) Start Run on Windows.bat from the OLD app folder after success.
+4) Roll back using Rollback Last Update.bat if needed.
+
+IMPORTANT:
+- A Windows EXE is NOT included in this source/update ZIP.
+- To build locally use Build EXE (Windows).bat; distribute the entire dist/PinHarbor folder.
+- Current GUI is Persian. English and Persian manuals are available.
+- Documentation: README.md / README-FA.md / docs/
+- Download only media you have the right to use.

@@ -1,0 +1,108 @@
+name: Test, package and draft release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pinharbor-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  tests:
+    name: Unit tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Audit curated repository files
+        run: python tools/verify_repository.py
+      - name: Offline regression tests
+        run: python -m unittest discover -s tests -v
+      - name: Verify source/update packaging
+        run: python tools/build_release.py
+
+  windows-build:
+    name: Build and smoke-test Windows portable application
+    needs: tests
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Ensure release tag matches app version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = python -c "from studio_core import APP_VERSION; print('v' + APP_VERSION)"
+            if ($env:GITHUB_REF_NAME -ne $version) { throw "Tag $env:GITHUB_REF_NAME does not match $version" }
+          }
+      - name: Install dependencies and build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+      - name: Offscreen Qt startup smoke test
+        run: python tools/smoke_gui.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - name: Build one-folder EXE
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onedir --windowed --name PinHarbor --collect-all gallery_dl --collect-all yt_dlp --collect-all imageio_ffmpeg --hidden-import gallery_dl.__main__ --add-data "app_icon.png;." --icon "app_icon.ico" pinterest_studio.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path dist/PinHarbor/PinHarbor.exe)) { throw 'EXE missing after build' }
+      - name: Collect third-party distribution notices
+        run: python tools/collect_licenses.py dist/PinHarbor/licenses
+      - name: Build and checksum Release ZIPs
+        run: python tools/build_release.py --windows-dist dist/PinHarbor
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pinharbor-release-assets
+          path: release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Create DRAFT release for manual QA
+    needs: windows-build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: pinharbor-release-assets
+          path: release
+      - name: Create review-only draft release
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          body_path: docs/RELEASE-NOTES-EN.md
+          files: |
+            release/*.zip
+            release/SHA256SUMS.txt
+          fail_on_unmatched_files: true
