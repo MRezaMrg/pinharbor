@@ -42,7 +42,7 @@ class InPlaceUpgradeTests(unittest.TestCase):
     def test_upgrade_preserves_media_archive_and_backup(self):
         result = upgrade(SOURCE, self.old)
         self.assertEqual(result["status"], "upgraded")
-        self.assertEqual(version_at(self.old), "2.5.0")
+        self.assertEqual(version_at(self.old), "2.6.0")
         self.assertEqual(self.archive.read_bytes(), b"test archive bytes do not overwrite")
         self.assertEqual((self.old / "user-image.jpg").read_bytes(), b"private media")
         self.assertEqual((self.old / "my-extra-file.txt").read_text(), "custom")
@@ -57,7 +57,7 @@ class InPlaceUpgradeTests(unittest.TestCase):
         result = upgrade(SOURCE, self.old)
         self.assertEqual(result["status"], "upgraded")
         self.assertTrue((self.old / "download_runtime.py").is_file())
-        self.assertEqual(version_at(self.old), "2.5.0")
+        self.assertEqual(version_at(self.old), "2.6.0")
         self.assertEqual(self.archive.read_bytes(), b"test archive bytes do not overwrite")
 
     def test_rollback_restores_previous_version_and_media(self):

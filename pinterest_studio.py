@@ -1,4 +1,4 @@
-"""PinHarbor v2.5 — local Persian Qt desktop application.
+"""PinHarbor v2.6 — bilingual local Qt desktop application.
 
 No Pinterest credentials are collected. gallery-dl uses the optional locally
 selected browser session. Download subprocesses run without shell=True.
@@ -28,6 +28,11 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QWidget, QHeaderView,
 )
 from PySide6.QtCore import QPoint
+from ui_language import tr, set_language, language
+# Localized Qt wrappers. The QSettings application identity is unchanged.
+from ui_qt import (QLabel, QPushButton, QCheckBox, QComboBox, QSpinBox,
+                   QPlainTextEdit, QLineEdit, QTableWidget, QTableWidgetItem,
+                   QTabWidget, QMessageBox)
 
 from studio_core import (
     APP_VERSION, QueueEntry, URLValidationError, board_title, build_command,
@@ -35,7 +40,7 @@ from studio_core import (
     export_manifest_csv, format_size, get_tools_status, list_media_files,
     load_queue, load_session, dump_session, media_kind, normalize_board_url, parse_boards,
     save_config, validate_proxy, redact_secrets, diagnose_error,
-    board_identity, choose_destination, check_destination_writable,
+    board_identity, choose_destination, check_destination_writable, assess_board_coverage,
 )
 from download_runtime import ProcessController
 
@@ -134,13 +139,15 @@ class DownloadWorker(QThread):
     board_started = Signal(int)
     board_stats = Signal(int, int, int)
     board_done = Signal(int, str, str)
+    board_discovered = Signal(int, int)
     all_done = Signal(bool, bool, int, int, int)
 
     def __init__(self, entries: list[QueueEntry], dest: Path, opts: dict):
         super().__init__()
         self.entries = [QueueEntry(e.url) for e in entries]
         self.dest = dest
-        self.opts = opts
+        self.opts = dict(opts)
+        self.expected_count = int(self.opts.pop("expected_count", 0)) if len(entries) == 1 else 0
         self._stop = threading.Event()
         self._skip = threading.Event()
         self._active_index: int | None = None
@@ -185,10 +192,15 @@ class DownloadWorker(QThread):
                         cmd = build_command(entry.url, self.dest, cfg, **self.opts)
                         last_stats_emitted = 0.0
                         current_ok = current_skip = 0
+                        current_pin_ids: set[str] = set()
                         def on_event(kind, msg, ok, skipped):
                             nonlocal total_ok, total_skip, last_stats_emitted, current_ok, current_skip
                             current_ok, current_skip = ok, skipped
-                            if kind == "ok":
+                            if kind == "seen":
+                                current_pin_ids.add(msg)
+                                if len(current_pin_ids) <= 3 or len(current_pin_ids) % 10 == 0:
+                                    self.board_discovered.emit(idx, len(current_pin_ids))
+                            elif kind == "ok":
                                 total_ok += 1
                                 if ok <= 8 or ok % 20 == 0:
                                     self.message.emit("✓ " + msg)
@@ -207,6 +219,7 @@ class DownloadWorker(QThread):
                             should_cancel=lambda: self._stop.is_set() or self._skip.is_set(),
                         )
                         self.board_stats.emit(idx, result.ok, result.skipped)
+                        self.board_discovered.emit(idx, result.discovered)
                         if self._stop.is_set():
                             self.board_done.emit(idx, "stopped", "فرایند متوقف شد")
                             break
@@ -220,10 +233,20 @@ class DownloadWorker(QThread):
                             reason = redact_secrets(reason, self.opts.get("proxy", ""))
                             self.board_done.emit(idx, "error", reason)
                             self.message.emit(f"خطا در پردازش بورد: {reason}")
-                        elif result.ok == 0 and result.skipped == 0:
-                            self.board_done.emit(idx, "empty", "هیچ فایل قابل‌دسترسی گزارش نشد؛ لینک یا دسترسی حساب را بررسی کنید")
                         else:
-                            self.board_done.emit(idx, "done", "تکمیل شد")
+                            coverage = assess_board_coverage(result.discovered, self.expected_count,
+                                                             result.ok, result.skipped)
+                            if coverage == "empty":
+                                self.board_done.emit(idx, "empty", "هیچ فایل قابل‌دسترسی گزارش نشد؛ لینک یا دسترسی حساب را بررسی کنید")
+                            elif coverage == "partial":
+                                reason = (f"فقط {result.discovered} پین شناسایی شد؛ انتظار {self.expected_count} پین بود. "
+                                          "با حساب مرورگر واردشده دوباره بررسی کنید."
+                                          if result.discovered else
+                                          "شمارش پین‌ها از موتور دریافت نشد؛ تعداد کامل بورد قابل تأیید نیست. "
+                                          "برای بررسی دوباره از حساب مرورگر واردشده استفاده کنید.")
+                                self.board_done.emit(idx, "partial", reason)
+                            else:
+                                self.board_done.emit(idx, "done", "دریافت موارد شناسایی‌شده پایان یافت؛ تعداد واقعی بورد ممکن است بیشتر باشد.")
                     except Exception as exc:
                         failures += 1
                         reason = redact_secrets(f"{type(exc).__name__}: {exc}", self.opts.get("proxy", ""))
@@ -471,7 +494,7 @@ class MainWindow(QMainWindow):
         outer.addWidget(self.tabs, 1)
         self.tabs.addTab(self.build_download_tab(), "صف دانلود")
         self.tabs.addTab(self.build_gallery_tab(), "کتابخانه رسانه‌ها")
-        self.tabs.addTab(self.build_settings_tab(), "تنظیمات پیشرفته")
+        self.tabs.addTab(self.build_settings_tab(), "تنظیمات")
         self.tabs.currentChanged.connect(self.on_tab_changed)
         self.set_running(False)
         status_frame = QFrame()
@@ -530,8 +553,8 @@ class MainWindow(QMainWindow):
             self.queue_state.addItem(label, val)
         self.queue_state.currentIndexChanged.connect(self.filter_queue)
         p.addLayout(row(self.queue_search, self.queue_state))
-        self.queue = QTableWidget(0, 5)
-        self.queue.setHorizontalHeaderLabels(["نام بورد", "وضعیت", "جدید", "تکراری", "جزئیات"])
+        self.queue = QTableWidget(0, 6)
+        self.queue.setHorizontalHeaderLabels(["نام بورد", "وضعیت", "پین کشف‌شده", "جدید", "تکراری", "جزئیات"])
         self.queue.setAlternatingRowColors(True)
         self.queue.setSortingEnabled(False)
         self.queue.setToolTip("روی نام بورد دوبار کلیک کنید تا در مرورگر باز شود.")
@@ -548,6 +571,7 @@ class MainWindow(QMainWindow):
         h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        h.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         p.addWidget(self.queue)
         self.queue_empty = QLabel("هنوز بوردی اضافه نشده. لینک را در بالای صفحه وارد کنید.")
         self.queue_empty.setObjectName("empty")
@@ -604,6 +628,21 @@ class MainWindow(QMainWindow):
             self.browser_box.addItem(label, val)
         opts.addWidget(self.browser_box, 2)
         p.addLayout(opts)
+        p.addWidget(muted("اگر تعداد فایل‌ها کمتر از پین‌های بورد است، مرورگری را انتخاب کنید که در آن وارد Pinterest شده‌اید و بورد را دوباره دانلود کنید."))
+        expected_row = QHBoxLayout()
+        expected_row.addWidget(QLabel("تعداد پین‌های بورد (اختیاری)"))
+        self.expected_box = QSpinBox()
+        self.expected_box.setRange(0, 1000000)
+        self.expected_box.setSpecialValueText("نامشخص")
+        self.expected_box.setToolTip("برای یک بورد، تعداد نمایش‌داده‌شده در پینترست را وارد کنید تا نتیجه کمتر از انتظار مشخص شود.")
+        expected_row.addWidget(self.expected_box)
+        expected_row.addWidget(muted("برای یک بورد؛ شمارنده تقریبی و قابل‌تغییر است."), 1)
+        p.addLayout(expected_row)
+        self.limit_notice = muted("")
+        p.addWidget(self.limit_notice)
+        self.limit_clear_btn = QPushButton("برداشتن محدودیت دریافت")
+        self.limit_clear_btn.clicked.connect(self.clear_download_limits)
+        p.addWidget(self.limit_clear_btn)
         self.start_btn = QPushButton("شروع دانلود همه بوردها")
         self.start_btn.setToolTip("تمام بوردها دوباره بررسی می‌شوند؛ آرشیو از دریافت تکراری فایل‌های موفق جلوگیری می‌کند.")
         self.start_btn.setObjectName("primary")
@@ -658,6 +697,7 @@ class MainWindow(QMainWindow):
         p.addLayout(logbuttons)
         root.addWidget(frame)
         self.log_frame.setVisible(False)
+        # Completeness reference is a user-supplied number, not a scraper promise.
         self.active_only_controls = [self.skip_btn, self.stop_btn]
         self.queue_mod_controls = [self.quick_btn, self.add_btn, self.remove_btn, self.up_btn, self.down_btn,
                                    self.import_btn, self.export_btn, self.browse_btn, self.clear_btn, self.select_btn]
@@ -754,13 +794,23 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(4, 5, 8, 15)
         layout.setSpacing(14)
+        language_panel, language_layout = panel("زبان / Language")
+        self.language_box = QComboBox()
+        self.language_box.addItem("فارسی", "fa")
+        self.language_box.addItem("English", "en")
+        selected_language = str(self.settings.value("language", "fa"))
+        self.language_box.setCurrentIndex(max(0, self.language_box.findData(selected_language)))
+        language_layout.addWidget(self.language_box)
+        language_layout.addWidget(muted("Language changes take effect after restarting the app. / تغییر زبان پس از اجرای مجدد برنامه اعمال می‌شود."))
+        self.language_box.currentIndexChanged.connect(self.change_language)
+        layout.addWidget(language_panel)
         font_panel, font_layout = panel("ظاهر و تایپوگرافی")
         font_layout.addWidget(muted("تم زرشکی، صورتی پاستلی و مشکی با پنل‌های شیشه‌ای فعال است. فونت‌ها فقط از میان فونت‌های نصب‌شده انتخاب می‌شوند."))
         font_layout.addWidget(QLabel("فونت رابط کاربری"))
         self.ui_font_box = QComboBox()
         families = QFontDatabase.families()
         recommended = choose_font(families)
-        self.ui_font_box.addItem(f"خودکار · {recommended}", "auto")
+        self.ui_font_box.addItem(f"Automatic · {recommended}" if language() == "en" else f"خودکار · {recommended}", "auto")
         for family in available_fonts(families):
             self.ui_font_box.addItem(family, family)
         self.ui_font_box.currentIndexChanged.connect(self.update_ui_font)
@@ -791,6 +841,7 @@ class MainWindow(QMainWindow):
         self.limit_box.setRange(0, 100000)
         self.limit_box.setValue(0)
         self.limit_box.setSpecialValueText("نامحدود")
+        self.limit_box.valueChanged.connect(self.update_limit_notice)
         grid.addWidget(self.limit_box, 1, 0)
         grid.addWidget(QLabel("محدودیت سرعت دانلود"), 0, 1)
         self.rate_box = QComboBox()
@@ -803,6 +854,7 @@ class MainWindow(QMainWindow):
         self.abort_box = QSpinBox()
         self.abort_box.setRange(0, 1000)
         self.abort_box.setSpecialValueText("غیرفعال (پیشنهادی)")
+        self.abort_box.valueChanged.connect(self.update_limit_notice)
         grid.addWidget(self.abort_box, 3, 0)
         p.addLayout(grid)
         p.addWidget(muted("اگر گزینه توقف زودهنگام را فعال کنید، ممکن است پین‌های جدیدِ عقب‌تر از موارد قدیمی بررسی نشوند؛ پیش‌فرض غیرفعال است."))
@@ -812,6 +864,8 @@ class MainWindow(QMainWindow):
         self.proxy_input.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
         p.addWidget(self.proxy_input)
         layout.addWidget(frame)
+        self.advanced_network_panel = frame
+        self.advanced_network_panel.setVisible(False)
         frame, p = panel("درباره موتور")
         self.engine_info = muted("")
         p.addWidget(self.engine_info)
@@ -824,9 +878,51 @@ class MainWindow(QMainWindow):
         p.addLayout(row(verify, preflight_btn, report))
         p.addWidget(muted("ورود فقط با کوکی ذخیره‌شده در مرورگر خودتان انجام می‌شود. برنامه رمز عبور پینترست را درخواست یا ذخیره نمی‌کند."))
         layout.addWidget(frame)
+        self.advanced_diagnostics_panel = frame
+        self.advanced_diagnostics_panel.setVisible(False)
+        self.advanced_button = QPushButton("نمایش گزینه‌های بیشتر")
+        self.advanced_button.setObjectName("quiet")
+        self.advanced_button.clicked.connect(self.toggle_advanced_settings)
+        layout.insertWidget(2, self.advanced_button)
         layout.addStretch(1)
         self.show_engine_status()
         return sc
+
+    def clear_download_limits(self):
+        self.limit_box.setValue(0)
+        self.abort_box.setValue(0)
+        self.save_settings()
+
+    def update_limit_notice(self, *_):
+        if not hasattr(self, "limit_notice"):
+            return
+        limit = self.limit_box.value()
+        early = self.abort_box.value()
+        active = bool(limit or early)
+        if language() == "en":
+            text = (f"Active download limit: max {limit} items per board. " if limit else "") + \
+                   (f"Early stop after {early} consecutive duplicates is on." if early else "")
+        else:
+            text = (f"محدودیت فعال: حداکثر {limit} مورد از هر بورد بررسی می‌شود. " if limit else "") + \
+                   (f"توقف زودهنگام پس از {early} مورد تکراری متوالی فعال است." if early else "")
+        self.limit_notice.setText(text)
+        self.limit_clear_btn.setVisible(active)
+        self.limit_notice.setVisible(active)
+
+    def change_language(self, *_):
+        selected = self.language_box.currentData()
+        if selected == str(self.settings.value("language", "fa")):
+            return
+        self.settings.setValue("language", selected)
+        self.settings.sync()
+        QMessageBox.information(self,
+            "Language / زبان", "Language saved. Restart PinHarbor to apply English or Persian.\nزبان ذخیره شد؛ برای اعمال تغییر، برنامه را ببندید و دوباره باز کنید.")
+
+    def toggle_advanced_settings(self):
+        visible = not self.advanced_network_panel.isVisible()
+        self.advanced_network_panel.setVisible(visible)
+        self.advanced_diagnostics_panel.setVisible(visible)
+        self.advanced_button.setText("پنهان‌کردن گزینه‌های بیشتر" if visible else "نمایش گزینه‌های بیشتر")
 
     # --- Queue controls ---
     def restore_settings(self):
@@ -842,7 +938,9 @@ class MainWindow(QMainWindow):
         self.meta_check.setChecked(self.settings.value("meta", False, type=bool))
         self.slow_check.setChecked(self.settings.value("slow", True, type=bool))
         self.limit_box.setValue(self.settings.value("limit", 0, type=int))
+        self.expected_box.setValue(self.settings.value("expected_count", 0, type=int))
         self.abort_box.setValue(self.settings.value("abort", 0, type=int))
+        self.update_limit_notice()
         try:
             session = str(self.settings.value("session", ""))
             self.jobs = load_session(session) if session else load_queue(str(self.settings.value("queue", "")))
@@ -873,6 +971,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("meta", self.meta_check.isChecked())
         self.settings.setValue("slow", self.slow_check.isChecked())
         self.settings.setValue("limit", self.limit_box.value())
+        self.settings.setValue("expected_count", self.expected_box.value())
         self.settings.setValue("abort", self.abort_box.value())
         self.settings.setValue("session", dump_session(self.jobs))
         self.settings.setValue("queue", dump_queue(self.jobs))
@@ -895,14 +994,15 @@ class MainWindow(QMainWindow):
         shown = 0
         for i, item in enumerate(self.jobs):
             matches_state = (state == "all" or item.status == state or
-                             (state == "problem" and item.status in ("error", "empty", "stopped")))
+                             (state == "problem" and item.status in ("error", "partial", "empty", "stopped")))
             visible = matches_state and (not query or query in board_title(item.url).casefold() or query in item.url.casefold())
             self.queue.setRowHidden(i, not visible)
             shown += bool(visible)
         self.queue_empty.setVisible(shown == 0)
         self.queue_empty.setText("هنوز بوردی اضافه نشده. لینک را در بالای صفحه وارد کنید." if not self.jobs
                                  else "موردی با این فیلتر پیدا نشد؛ فیلتر را تغییر دهید.")
-        self.queue_count.setText(f"{shown:,} بورد نمایش داده می‌شود · {len(self.jobs):,} بورد در صف")
+        self.queue_count.setText(f"{shown:,} board(s) shown · {len(self.jobs):,} queued" if language() == "en" else
+                                 f"{shown:,} بورد نمایش داده می‌شود · {len(self.jobs):,} بورد در صف")
 
     def toggle_logs(self):
         expanded = not self.log_frame.isVisible()
@@ -916,8 +1016,9 @@ class MainWindow(QMainWindow):
         entry = self.jobs[idx]
         states = {"pending": "در انتظار", "running": "در حال دانلود", "done": "تکمیل‌شده",
                   "error": "خطا", "skipped": "با درخواست کاربر رد شد", "stopped": "متوقف‌شده",
-                  "empty": "بدون رسانه"}
+                  "empty": "بدون رسانه", "partial": "نیازمند بررسی"}
         values = [board_title(entry.url), states.get(entry.status, entry.status),
+                  str(entry.discovered) if entry.discovered else "—",
                   str(entry.new), str(entry.skipped), entry.last_error or "—"]
         for col, value in enumerate(values):
             cell = self.queue.item(idx, col)
@@ -927,11 +1028,11 @@ class MainWindow(QMainWindow):
             cell.setText(value)
             if col == 0:
                 cell.setToolTip(entry.url)
-            if col == 4 and entry.last_error:
+            if col == 5 and entry.last_error:
                 cell.setToolTip(entry.last_error)
-            if col in (2, 3):
+            if col in (2, 3, 4):
                 cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        if entry.status == "error":
+        if entry.status in ("error", "partial"):
             self.queue.item(idx, 1).setForeground(QColor(PALETTE["error"]))
         elif entry.status == "done":
             self.queue.item(idx, 1).setForeground(QColor(PALETTE["success"]))
@@ -988,6 +1089,15 @@ class MainWindow(QMainWindow):
             self.link_preview.setText(f"نیاز به اصلاح لینک: {exc}")
 
     def show_quick_guide(self):
+        if language() == "en":
+            QMessageBox.information(self, "PinHarbor quick guide",
+                "1. Paste one board URL per line.\n"
+                "2. Click Download now. Open Library to browse your media.\n"
+                "3. For fewer pins than expected, enter the Pinterest board count, "
+                "select a browser where you are signed in, and retry.\n"
+                "4. Change the language in Settings; restart to apply.\n\n"
+                "Only download content you have the right to access and use.")
+            return
         QMessageBox.information(
             self, "راهنمای سریع PinHarbor",
             "۱. لینک بورد را در کادر بالای صفحه وارد کنید.\n"
@@ -1160,7 +1270,7 @@ class MainWindow(QMainWindow):
         self.start_jobs(list(range(len(self.jobs))))
 
     def retry_failed(self):
-        indices = [i for i, e in enumerate(self.jobs) if e.status in ("error", "stopped", "empty")]
+        indices = [i for i, e in enumerate(self.jobs) if e.status in ("error", "partial", "stopped", "empty")]
         if not indices:
             QMessageBox.information(self, "صف بدون خطا", "هیچ بورد ناموفق یا متوقف‌شده‌ای در صف نیست.")
             return
@@ -1183,12 +1293,15 @@ class MainWindow(QMainWindow):
         except (ValueError, OSError) as exc:
             QMessageBox.warning(self, "تنظیمات نادرست", str(exc))
             return
+        if len(indices) == 1:
+            opts["expected_count"] = self.expected_box.value()
         self.save_settings()
         self._active_indices = indices
         subset: list[QueueEntry] = []
         for idx in indices:
             self.jobs[idx].status = "pending"
-            self.jobs[idx].new = self.jobs[idx].skipped = 0
+            self.jobs[idx].new = self.jobs[idx].skipped = self.jobs[idx].discovered = 0
+            self.jobs[idx].expected = self.expected_box.value() if len(indices) == 1 else 0
             self.jobs[idx].last_error = ""
             self.render_job(idx)
             subset.append(QueueEntry(self.jobs[idx].url))
@@ -1197,6 +1310,7 @@ class MainWindow(QMainWindow):
         self.worker.message.connect(self.append_log)
         self.worker.board_started.connect(self.on_board_started)
         self.worker.board_stats.connect(self.on_board_stats)
+        self.worker.board_discovered.connect(self.on_board_discovered)
         self.worker.board_done.connect(self.on_board_done)
         self._finish_result = None
         self.worker.all_done.connect(self.remember_finish)
@@ -1207,6 +1321,8 @@ class MainWindow(QMainWindow):
         self.busy.setRange(0, len(indices))
         self.busy.setValue(0)
         self._run_started = time.monotonic()
+        if len(indices) != 1 and self.expected_box.value():
+            self.append_log("Expected pin count is checked for one board at a time; this run includes several boards.")
         self.elapsed_label.setText("زمان اجرا: 00:00")
         self._elapsed_timer.start()
         self._checkpoint_timer.start()
@@ -1224,6 +1340,11 @@ class MainWindow(QMainWindow):
         self.queue.scrollToItem(self.queue.item(actual, 0))
         self.status.setText(f"در حال پردازش {idx + 1} از {len(self._active_indices)}: {board_title(self.jobs[actual].url)}")
 
+    def on_board_discovered(self, idx: int, discovered: int):
+        actual = self._active_indices[idx]
+        self.jobs[actual].discovered = discovered
+        self.render_job(actual)
+
     def on_board_stats(self, idx: int, ok: int, skipped: int):
         actual = self._active_indices[idx]
         entry = self.jobs[actual]
@@ -1237,15 +1358,15 @@ class MainWindow(QMainWindow):
         actual = self._active_indices[idx]
         entry = self.jobs[actual]
         entry.status = state
-        entry.last_error = ((diagnose_error(message) + " | " + message[:180]) if state == "error"
-                            else message if state == "empty" else "")
+        entry.last_error = (diagnose_error(message) if state == "error"
+                            else message if state in ("empty", "partial") else "")
         self.render_job(actual)
         self.filter_queue()
         self._completed += 1
         self.busy.setValue(self._completed)
         self.progress_caption.setText(f"{self._completed} بورد از {len(self._active_indices)} بررسی شد؛ تعداد کل فایل‌های قابل دریافت ممکن است مشخص نباشد.")
         self.stat_boards.set_count(self._completed)
-        self.stat_err.set_count(sum(self.jobs[i].status in ("error", "empty") for i in self._active_indices))
+        self.stat_err.set_count(sum(self.jobs[i].status in ("error", "partial", "empty") for i in self._active_indices))
         self.save_settings()
 
     def remember_finish(self, success: bool, stopped: bool, ok: int, skipped: int, failed: int):
@@ -1267,14 +1388,20 @@ class MainWindow(QMainWindow):
     def on_all_done(self, success: bool, stopped: bool, ok: int, skipped: int, failed: int):
         self.set_running(False)
         if stopped:
-            msg = "عملیات متوقف شد. برای ادامه، اجرای دوباره صف از آرشیو استفاده می‌کند."
+            msg = ("Downloads stopped. Retry to continue without redownloading saved files."
+                   if language() == "en" else
+                   "عملیات متوقف شد. برای ادامه، اجرای دوباره صف از آرشیو استفاده می‌کند.")
         else:
-            attention = sum(self.jobs[i].status in ("error", "empty") for i in self._active_indices)
+            attention = sum(self.jobs[i].status in ("error", "partial", "empty") for i in self._active_indices)
             if attention:
-                msg = (f"صف بررسی شد: {ok} فایل جدید، {skipped} مورد موجود/ردشده؛ "
+                msg = (f"Finished checking: {ok} new files, {skipped} skipped. {attention} board(s) need review."
+                       if language() == "en" else
+                       f"صف بررسی شد: {ok} فایل جدید، {skipped} مورد موجود/ردشده؛ "
                        f"{attention} بورد نیازمند بررسی یا اجرای مجدد است.")
             else:
-                msg = f"صف پایان یافت: {ok} فایل جدید، {skipped} رسانه تکراری یا ازقبل دریافت‌شده."
+                msg = (f"Finished: {ok} new files, {skipped} already saved/skipped. Full Pinterest coverage is not guaranteed."
+                       if language() == "en" else
+                       f"صف پایان یافت: {ok} فایل جدید، {skipped} رسانه تکراری یا ازقبل دریافت‌شده.")
         self.status.setText(msg)
         self.append_log("===== " + msg + " =====")
         self.save_settings()
@@ -1288,7 +1415,7 @@ class MainWindow(QMainWindow):
             widget.setEnabled(not running)
         for widget in (self.link_input, self.dest_input, self.media_box, self.browser_box,
                        self.group_check, self.meta_check, self.slow_check, self.proxy_input,
-                       self.limit_box, self.rate_box, self.abort_box):
+                       self.limit_box, self.rate_box, self.abort_box, self.expected_box, self.limit_clear_btn):
             widget.setEnabled(not running)
         self.start_btn.setEnabled(not running)
         self.retry_btn.setEnabled(not running)
@@ -1535,7 +1662,8 @@ class MainWindow(QMainWindow):
             size = "اندازه نامشخص"
         kind = media_kind(path)
         self.preview_name.setText(path.name)
-        self.preview_details.setText(f"{'ویدیو' if kind == 'video' else 'تصویر'} | {size} | {path.suffix.lower()}")
+        display_kind = ("Video" if kind == "video" else "Image") if language() == "en" else ("ویدیو" if kind == "video" else "تصویر")
+        self.preview_details.setText(f"{display_kind} | {size} | {path.suffix.lower()}")
         for b in self.gallery_preview_buttons:
             b.setEnabled(True)
         self.preview_art.setPixmap(QPixmap())
@@ -1709,11 +1837,18 @@ class MainWindow(QMainWindow):
 
 def app_main():
     app = QApplication(sys.argv)
+    saved_language = str(QSettings("PinterestBoardStudio", "Desktop").value("language", "fa"))
+    set_language(saved_language)
     app.setApplicationName("PinHarbor")
     app.setApplicationVersion(APP_VERSION)
-    app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+    app.setLayoutDirection(Qt.LayoutDirection.LeftToRight if language() == "en" else Qt.LayoutDirection.RightToLeft)
     preference = str(QSettings("PinterestBoardStudio", "Desktop").value("ui_font", "auto"))
-    app.setFont(QFont(choose_font(QFontDatabase.families(), preference), 10))
+    installed = QFontDatabase.families()
+    if language() == "en" and preference == "auto":
+        family = next((f for f in ("Segoe UI", "Inter", "Arial") if f in installed), choose_font(installed))
+    else:
+        family = choose_font(installed, preference)
+    app.setFont(QFont(family, 10))
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE_SHEET)
     icon_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))

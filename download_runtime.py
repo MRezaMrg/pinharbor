@@ -20,6 +20,7 @@ class BoardRunResult:
     returncode: int
     ok: int
     skipped: int
+    discovered: int = 0
     last_error: str = ""
 
 
@@ -83,6 +84,7 @@ class ProcessController:
         with self._lock:
             self._process = proc
         ok = skipped = 0
+        pin_ids: set[str] = set()
         error = ""
         try:
             if should_cancel():
@@ -90,7 +92,10 @@ class ProcessController:
             assert proc.stdout is not None
             for raw in proc.stdout:
                 kind, message = parse_output_event(raw)
-                if kind == "ok":
+                if kind == "seen":
+                    if message.strip():
+                        pin_ids.add(message.strip())
+                elif kind == "ok":
                     ok += 1
                 elif kind == "skip":
                     skipped += 1
@@ -98,7 +103,7 @@ class ProcessController:
                     error = message[:500]
                 on_event(kind, message, ok, skipped)
             code = proc.wait()
-            return BoardRunResult(code, ok, skipped, error)
+            return BoardRunResult(code, ok, skipped, len(pin_ids), error)
         finally:
             if proc.poll() is None:
                 kill_process_tree(proc)

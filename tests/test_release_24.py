@@ -11,7 +11,7 @@ R = Path(__file__).resolve().parents[1]
 
 class PublicReleaseTests(unittest.TestCase):
     def test_brand_and_release_version(self):
-        self.assertEqual(APP_VERSION, '2.5.0')
+        self.assertEqual(APP_VERSION, '2.6.0')
         self.assertEqual(APP_NAME, 'PinHarbor')
 
     def test_qsettings_preserved_for_legacy_users(self):
@@ -24,11 +24,11 @@ class PublicReleaseTests(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_public_documentation_present(self):
-        files = ['README.md','README-FA.md','README-EN.md','LICENSE',
+        files = ['README.md','README-FA.md','LICENSE',
                  'CONTRIBUTING.md','SUPPORT.md','SECURITY.md','CODE_OF_CONDUCT.md',
                  'docs/INSTALL-EN.md','docs/INSTALL-FA.md',
                  'docs/PRIVACY-EN.md','docs/PRIVACY-FA.md',
-                 'docs/RELEASE-CHECKLIST.md','docs/GITHUB-PUBLISH-FA.md',
+                 'docs/RELEASE-CHECKLIST.md','docs/MAINTAINER-FA.md',
                  '.github/ISSUE_TEMPLATE/bug_report.yml',
                  '.github/ISSUE_TEMPLATE/feature_request.yml']
         for file in files:

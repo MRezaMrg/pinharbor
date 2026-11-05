@@ -1,6 +1,6 @@
 # Security policy / سیاست امنیتی
 
-Supported version: latest release only (currently the 2.4.x line).
+Supported versions: the most recent **published** release only. Beta releases may receive best-effort fixes.
 
 **Please do not publicly post exploit details, session cookies, tokens, proxy passwords or private board URLs.** Use GitHub's **Report a vulnerability** / private vulnerability reporting feature if enabled in the repository settings. If it is not enabled, contact the maintainers privately using a channel they publish in the repository profile. Do not place secrets in an ordinary Issue.
 

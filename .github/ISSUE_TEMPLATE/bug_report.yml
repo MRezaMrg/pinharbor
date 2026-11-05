@@ -10,7 +10,7 @@ body:
     id: version
     attributes:
       label: App version / نسخه نرم‌افزار
-      placeholder: "2.4.0"
+      placeholder: "2.6.0"
     validations:
       required: true
   - type: input
@@ -27,6 +27,24 @@ body:
       options: [Source ZIP, Windows portable EXE, Updated source installation, Other]
     validations:
       required: true
+  - type: dropdown
+    id: issue_kind
+    attributes:
+      label: What happened? / نوع مشکل
+      options: [Incomplete board (missing pins), Video issue, Download error, App or interface error, Other]
+    validations:
+      required: true
+  - type: input
+    id: counts
+    attributes:
+      label: Observed counts / تعداد پین‌های شناسایی‌شده و فایل‌ها
+      placeholder: "Pinterest: 45 pins; PinHarbor found: 25 pins; new files: 25; skipped: 0"
+      description: "Pins and media files differ. Numbers are observations, not guaranteed totals."
+  - type: dropdown
+    id: browser_session
+    attributes:
+      label: Pinterest session / وضعیت ورود به حساب
+      options: [Public (not signed in), Chrome, Edge, Firefox, Brave, Other, Prefer not to say]
   - type: textarea
     id: steps
     attributes:

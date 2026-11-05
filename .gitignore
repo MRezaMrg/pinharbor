@@ -1,4 +1,4 @@
-# Python and packaging
+# Local Python environments and generated files
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -8,10 +8,12 @@ build/
 dist/
 *.spec
 *.egg-info/
-# App state, downloaded media, logs, credentials
+release/
+
+# Local downloads, authentication, logs and session data
 .pinterest-studio/
-download_archive.sqlite3
 *.sqlite3
+*.sqlite3-*
 *.db
 *.log
 *.part
@@ -23,10 +25,27 @@ cookies*.json
 .env
 .env.*
 !*.env.example
-# OS / IDE
+
+# Editor and operating system
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
-# Build output
-release/
+
+# v2.5.0 docs and duplicate assets retired from the public repository;
+# keep locally if you have edited them. The publish tool untracks only these.
+README-EN.md
+START-HERE.txt
+docs/GITHUB-PUBLISH-FA.md
+docs/ONE-CLICK-PUBLISH-EN.md
+docs/ONE-CLICK-PUBLISH-FA.md
+docs/LAUNCH-KIT-FA-EN.md
+docs/QA-REPORT.md
+docs/BRAND-GUIDE.md
+docs/RELEASE-NOTES-EN.md
+docs/RELEASE-NOTES-FA.md
+assets/pinharbor-icon-512.png
+assets/pinharbor-icon.ico
+
+# Backups created by the optional one-click GitHub repository updater
+.pinharbor-repo-backups/

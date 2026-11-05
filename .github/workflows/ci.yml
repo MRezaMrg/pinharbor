@@ -1,9 +1,9 @@
-name: Test, package and draft release
+name: CI / Windows build / draft release
 
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ['v*.*.*']
   pull_request:
   workflow_dispatch:
 
@@ -101,7 +101,8 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           draft: true
-          body_path: docs/RELEASE-NOTES-EN.md
+          generate_release_notes: true
+          prerelease: true
           files: |
             release/*.zip
             release/SHA256SUMS.txt

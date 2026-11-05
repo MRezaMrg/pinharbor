@@ -4,6 +4,7 @@ import unittest
 
 from ui_theme import STYLE_SHEET, PALETTE, choose_font, available_fonts
 from upgrade_existing import APP_FILES
+from release_manifest import SOURCE_FILES
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,7 +54,8 @@ class VisualContracts(unittest.TestCase):
     def test_font_files_not_bundled_and_not_required(self):
         self.assertFalse(any(p.suffix.lower() in ('.ttf', '.otf', '.woff', '.woff2') for p in ROOT.rglob('*')))
         self.assertIn('ui_theme.py', APP_FILES)
-        self.assertIn('tests/test_theme_23.py', APP_FILES)
+        self.assertIn('tests/test_theme_23.py', SOURCE_FILES)
+        self.assertNotIn('tests/test_theme_23.py', APP_FILES)
 
 
 if __name__ == '__main__':

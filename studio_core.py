@@ -20,7 +20,7 @@ from typing import Iterable, Iterator
 from urllib.parse import unquote, urlsplit
 
 APP_NAME = "PinHarbor"
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.6.0"
 IMAGE_EXTS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".bmp", ".tif", ".tiff"})
 VIDEO_EXTS = frozenset({".mp4", ".webm", ".mov", ".m4v", ".mkv", ".avi", ".flv", ".ts"})
 MEDIA_IMAGES = tuple(sorted(s.removeprefix(".") for s in IMAGE_EXTS))
@@ -134,6 +134,8 @@ def board_title(url: str) -> str:
 class QueueEntry:
     url: str
     status: str = "pending"
+    discovered: int = 0
+    expected: int = 0
     new: int = 0
     skipped: int = 0
     last_error: str = ""
@@ -163,11 +165,11 @@ def load_queue(data: str) -> list[QueueEntry]:
 
 # Session is separate from the portable export (which intentionally has URLs only).
 # No cookie data, proxy, token or browser profile details are stored here.
-SESSION_STATES = frozenset({"pending", "running", "done", "error", "skipped", "stopped", "empty"})
+SESSION_STATES = frozenset({"pending", "running", "done", "partial", "error", "skipped", "stopped", "empty"})
 
 
 def dump_session(entries: Iterable[QueueEntry]) -> str:
-    rows = [{"url": e.url, "status": e.status, "new": e.new,
+    rows = [{"url": e.url, "status": e.status, "discovered": e.discovered, "expected": e.expected, "new": e.new,
              "skipped": e.skipped, "last_error": e.last_error[:350]}
             for e in entries]
     return json.dumps({"format": "PBS-session", "version": 1, "boards": rows}, ensure_ascii=False)
@@ -195,7 +197,7 @@ def load_session(data: str) -> list[QueueEntry]:
         seen.add(key)
         state = row.get("status", "pending")
         entry.status = ("stopped" if state == "running" else state) if state in SESSION_STATES else "pending"
-        for key in ("new", "skipped"):
+        for key in ("new", "skipped", "discovered", "expected"):
             count = row.get(key, 0)
             setattr(entry, key, count if type(count) is int and 0 <= count <= 100000000 else 0)
         err = row.get("last_error", "")
@@ -324,6 +326,9 @@ def build_command(board: str, destination: Path, config_file: Path, *,
         "--download-archive", str(archive_dir / "download_archive.sqlite3"),
         "--windows-filenames", "--no-input", "--no-colors", "--http-timeout", "35",
         "--retries", "4", "--sleep-429", "30",
+        # Track unique pin IDs, even when files already exist in the archive.
+        # This is an observed count, NOT a claim of complete board coverage.
+        "--Print", "prepare:PINHARBOR_SEEN|{id}",
     ]
     if throttle:
         cmd.extend(["--sleep-request", "0.8-1.5"])
@@ -346,9 +351,28 @@ def build_command(board: str, destination: Path, config_file: Path, *,
     return cmd
 
 
+def assess_board_coverage(discovered: int, expected: int, new: int, skipped: int) -> str:
+    """Never present an unverifiable count as proof a board was fully captured.
+
+    ``discovered`` counts unique PIN IDs emitted by the engine. ``expected``
+    is an optional human-entered reference from Pinterest. Neither is an API
+    assertion. Counting files cannot substitute for counting pins; a pin can
+    contain more than one media item or no downloadable item.
+    """
+    if min(discovered, expected, new, skipped) < 0:
+        raise ValueError("Counts must be nonnegative")
+    if new + skipped == 0:
+        return "empty"
+    if expected and discovered < expected:
+        return "partial"
+    return "done"
+
+
 def parse_output_event(line: str) -> tuple[str, str]:
     """Distinguish successful media from archive skips and ordinary log lines."""
     s = line.rstrip("\r\n")
+    if s.startswith("PINHARBOR_SEEN|"):
+        return "seen", s[len("PINHARBOR_SEEN|"):]
     if s.startswith("PBS_OK|"):
         return "ok", s[7:]
     if s.startswith("PBS_SKIP|"):
